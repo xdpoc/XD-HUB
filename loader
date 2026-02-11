@@ -1,0 +1,562 @@
+--[[
+    XD HUB - 2026
+    KEYAUTH.CC FIXED - ACTUALLY WORKS
+]]
+
+-- SERVICES
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- YOUR KEYAUTH DETAILS - DOUBLE CHECK THESE!!!
+local KeyAuthApp = "XD HUB" -- EXACT name from keyauth.cc
+local KeyAuthOwner = "eDjLQhPvrs" -- YOUR ownerid
+local KeyAuthVersion = "1.0"
+
+-- STATE
+local SessionID = ""
+local UserData = nil
+local Authenticated = false
+
+-- LOAD RAYFIELD
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- SIMPLE URL ENCODE
+local function encode(str)
+    str = tostring(str)
+    str = str:gsub(" ", "%%20")
+    str = str:gsub("&", "%%26")
+    str = str:gsub("%+", "%%2B")
+    str = str:gsub("%/", "%%2F")
+    return str
+end
+
+-- ACTUALLY INIT KEYAUTH
+local function initKeyAuth()
+    local url = "https://keyauth.win/api/1.1/?name=" .. encode(KeyAuthApp) .. 
+                "&ownerid=" .. encode(KeyAuthOwner) .. 
+                "&type=init" .. 
+                "&ver=" .. encode(KeyAuthVersion)
+    
+    local success, result = pcall(function()
+        return game:HttpGet(url)
+    end)
+    
+    if not success then
+        return false, "Connection failed"
+    end
+    
+    local success2, data = pcall(function()
+        return HttpService:JSONDecode(result)
+    end)
+    
+    if not success2 or not data then
+        return false, "Invalid response"
+    end
+    
+    if data.success then
+        SessionID = data.sessionid
+        return true, "Initialized"
+    else
+        return false, data.message or "Init failed"
+    end
+end
+
+-- ACTUALLY CHECK LICENSE
+local function checkLicense(key)
+    if not key or key:gsub("%s", "") == "" then
+        return false, "No key entered"
+    end
+    
+    local url = "https://keyauth.win/api/1.1/?name=" .. encode(KeyAuthApp) .. 
+                "&ownerid=" .. encode(KeyAuthOwner) .. 
+                "&type=license" .. 
+                "&key=" .. encode(key) .. 
+                "&ver=" .. encode(KeyAuthVersion) .. 
+                "&sessionid=" .. encode(SessionID)
+    
+    local success, result = pcall(function()
+        return game:HttpGet(url)
+    end)
+    
+    if not success then
+        return false, "Connection failed"
+    end
+    
+    local success2, data = pcall(function()
+        return HttpService:JSONDecode(result)
+    end)
+    
+    if not success2 or not data then
+        return false, "Invalid response"
+    end
+    
+    if data.success then
+        UserData = data
+        Authenticated = true
+        return true, "Valid key"
+    else
+        return false, data.message or "Invalid key"
+    end
+end
+
+-- DO INIT FIRST
+local initSuccess, initMsg = initKeyAuth()
+if not initSuccess then
+    LocalPlayer:Kick("Auth Error: " .. initMsg)
+    return
+end
+
+-- CREATE WINDOW
+local Window = Rayfield:CreateWindow({
+    Name = "XD HUB",
+    LoadingTitle = "XD HUB",
+    LoadingSubtitle = "by @mqp6 / Poc",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "XDHub",
+        FileName = "Settings"
+    },
+    Discord = {
+        Enabled = true,
+        Invite = "rmpQfYtnWd",
+        RememberJoins = true
+    },
+    KeySystem = true,
+    KeySettings = {
+        Title = "XD HUB Verification",
+        Subtitle = "Enter License Key",
+        Note = "🔐 Keys validated by Verified Services & keyauth.cc",
+        FileName = "XDHub_License",
+        SaveKey = true,
+        GrabKeyFromSite = false,
+        Key = {"placeholder"} -- DUMMY, WE OVERRIDE
+    }
+})
+
+-- BRUTE FORCE OVERRIDE RAYFIELD'S KEY CHECK
+task.spawn(function()
+    -- Wait for UI
+    task.wait(1)
+    
+    -- Find the key system table
+    local keySystemTable = nil
+    
+    -- Method 1: Check Rayfield global
+    if Rayfield and Rayfield.KeySystem then
+        keySystemTable = Rayfield.KeySystem
+    end
+    
+    -- Method 2: Search gc
+    if not keySystemTable then
+        for _, v in pairs(getgc(true)) do
+            if type(v) == "table" then
+                if rawget(v, "CheckKey") and type(v.CheckKey) == "function" then
+                    keySystemTable = v
+                    break
+                end
+            end
+        end
+    end
+    
+    -- Method 3: Check Flags
+    if not keySystemTable and Rayfield and Rayfield.Flags then
+        keySystemTable = Rayfield.Flags.KeySystem
+    end
+    
+    -- Override if found
+    if keySystemTable then
+        local oldCheck = keySystemTable.CheckKey
+        
+        keySystemTable.CheckKey = function(key)
+            if not key or key == "" then
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Enter a key",
+                    Duration = 3
+                })
+                return false
+            end
+            
+            Rayfield:Notify({
+                Title = "Verifying",
+                Content = "Checking KeyAuth...",
+                Duration = 2
+            })
+            
+            local valid, msg = checkLicense(key)
+            
+            if valid then
+                -- Save key
+                if keySystemTable.SaveKey then
+                    pcall(function()
+                        keySystemTable:SaveKey(key)
+                    end)
+                end
+                
+                -- Update window name
+                local name = UserData and UserData.info and UserData.info.username or LocalPlayer.Name
+                pcall(function()
+                    Window:UpdateName("XD HUB | " .. name)
+                end)
+                
+                Rayfield:Notify({
+                    Title = "✅ Verified",
+                    Content = "Welcome " .. name,
+                    Duration = 4
+                })
+                
+                return true
+            else
+                Rayfield:Notify({
+                    Title = "❌ Invalid",
+                    Content = msg or "Key rejected",
+                    Duration = 4
+                })
+                return false
+            end
+        end
+    end
+end)
+
+-- WAIT FOR AUTH
+while not Authenticated do
+    task.wait(0.1)
+end
+
+-- =============================================
+-- MAIN HUB - LOADS AFTER KEY IS VALID
+-- =============================================
+
+-- Update window name
+pcall(function()
+    local name = UserData and UserData.info and UserData.info.username or LocalPlayer.Name
+    Window:UpdateName("XD HUB | " .. name)
+end)
+
+-- FEATURES TABLE
+local F = {
+    aim = {on = false, part = "Head", fov = 90, smooth = 1},
+    trig = {on = false, delay = 0.1},
+    noclip = {on = false, conn = nil},
+    fly = {on = false, speed = 50, gyro = nil, vel = nil, conn = nil}
+}
+
+-- CREATE TABS
+local t1 = Window:CreateTab("Main", 4483362458)
+local t2 = Window:CreateTab("Player", 4483362458)
+local t3 = Window:CreateTab("Visuals", 4483362458)
+local t4 = Window:CreateTab("Info", 4483362458)
+
+-- ========== MAIN TAB ==========
+t1:CreateSection("Aimbot")
+
+t1:CreateToggle({
+    Name = "Enable",
+    CurrentValue = false,
+    Callback = function(v)
+        F.aim.on = v
+        Rayfield:Notify({Title = "Aimbot", Content = v and "On" or "Off", Duration = 1})
+    end
+})
+
+t1:CreateDropdown({
+    Name = "Hitbox",
+    Options = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"},
+    CurrentOption = {"Head"},
+    Callback = function(v)
+        F.aim.part = v[1]
+    end
+})
+
+t1:CreateSlider({
+    Name = "FOV",
+    Range = {10, 200},
+    Increment = 5,
+    CurrentValue = 90,
+    Callback = function(v)
+        F.aim.fov = v
+    end
+})
+
+t1:CreateSlider({
+    Name = "Smooth",
+    Range = {1, 20},
+    Increment = 1,
+    CurrentValue = 1,
+    Callback = function(v)
+        F.aim.smooth = v
+    end
+})
+
+t1:CreateSection("Triggerbot")
+
+t1:CreateToggle({
+    Name = "Enable",
+    CurrentValue = false,
+    Callback = function(v)
+        F.trig.on = v
+        Rayfield:Notify({Title = "Trigger", Content = v and "On" or "Off", Duration = 1})
+    end
+})
+
+t1:CreateSlider({
+    Name = "Delay (ms)",
+    Range = {0, 300},
+    Increment = 10,
+    CurrentValue = 100,
+    Callback = function(v)
+        F.trig.delay = v / 1000
+    end
+})
+
+-- ========== PLAYER TAB ==========
+t2:CreateSection("Movement")
+
+t2:CreateSlider({
+    Name = "WalkSpeed",
+    Range = {16, 250},
+    Increment = 1,
+    CurrentValue = 16,
+    Callback = function(v)
+        pcall(function()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                LocalPlayer.Character.Humanoid.WalkSpeed = v
+            end
+        end)
+    end
+})
+
+t2:CreateSlider({
+    Name = "JumpPower",
+    Range = {50, 250},
+    Increment = 1,
+    CurrentValue = 50,
+    Callback = function(v)
+        pcall(function()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                LocalPlayer.Character.Humanoid.JumpPower = v
+            end
+        end)
+    end
+})
+
+t2:CreateToggle({
+    Name = "Noclip",
+    CurrentValue = false,
+    Callback = function(v)
+        F.noclip.on = v
+        
+        if F.noclip.conn then
+            F.noclip.conn:Disconnect()
+            F.noclip.conn = nil
+        end
+        
+        if v then
+            F.noclip.conn = RunService.Stepped:Connect(function()
+                if LocalPlayer.Character then
+                    for _, p in pairs(LocalPlayer.Character:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            p.CanCollide = false
+                        end
+                    end
+                end
+            end)
+        end
+        
+        Rayfield:Notify({Title = "Noclip", Content = v and "On" or "Off", Duration = 1})
+    end
+})
+
+t2:CreateToggle({
+    Name = "Fly",
+    CurrentValue = false,
+    Callback = function(v)
+        F.fly.on = v
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChild("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        
+        if v and hum and root then
+            hum.PlatformStand = true
+            
+            F.fly.gyro = Instance.new("BodyGyro")
+            F.fly.gyro.P = 9e4
+            F.fly.gyro.MaxTorque = Vector3.new(9e4, 9e4, 9e4)
+            F.fly.gyro.CFrame = root.CFrame
+            F.fly.gyro.Parent = root
+            
+            F.fly.vel = Instance.new("BodyVelocity")
+            F.fly.vel.Velocity = Vector3.new(0, 0, 0)
+            F.fly.vel.MaxForce = Vector3.new(9e4, 9e4, 9e4)
+            F.fly.vel.Parent = root
+            
+            F.fly.conn = RunService.RenderStepped:Connect(function()
+                if not F.fly.on or not char or not root then return end
+                local dir = Vector3.new(0, 0, 0)
+                
+                if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                    dir = dir + Camera.CFrame.LookVector
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                    dir = dir - Camera.CFrame.LookVector
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                    dir = dir - Camera.CFrame.RightVector
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                    dir = dir + Camera.CFrame.RightVector
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                    dir = dir + Vector3.new(0, 1, 0)
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                    dir = dir - Vector3.new(0, 1, 0)
+                end
+                
+                F.fly.vel.Velocity = dir * F.fly.speed
+                F.fly.gyro.CFrame = Camera.CFrame
+            end)
+        elseif not v then
+            if F.fly.gyro then F.fly.gyro:Destroy() F.fly.gyro = nil end
+            if F.fly.vel then F.fly.vel:Destroy() F.fly.vel = nil end
+            if F.fly.conn then F.fly.conn:Disconnect() F.fly.conn = nil end
+            if hum then hum.PlatformStand = false end
+        end
+        
+        Rayfield:Notify({Title = "Fly", Content = v and "On" or "Off", Duration = 1})
+    end
+})
+
+t2:CreateSlider({
+    Name = "Fly Speed",
+    Range = {10, 150},
+    Increment = 5,
+    CurrentValue = 50,
+    Callback = function(v)
+        F.fly.speed = v
+    end
+})
+
+-- ========== VISUALS ==========
+t3:CreateSection("ESP")
+
+t3:CreateToggle({
+    Name = "ESP (WIP)",
+    CurrentValue = false,
+    Callback = function(v)
+        Rayfield:Notify({Title = "ESP", Content = "Coming soon", Duration = 2})
+    end
+})
+
+-- ========== INFO TAB ==========
+t4:CreateSection("Account")
+
+t4:CreateParagraph({
+    Title = "Your Info",
+    Content = string.format(
+        "User: %s\nEmail: %s\nExpires: %s\nPlan: %s",
+        (UserData and UserData.info and UserData.info.username) or LocalPlayer.Name,
+        (UserData and UserData.info and UserData.info.email) or "N/A",
+        (UserData and UserData.info and UserData.info.expires) or "Lifetime",
+        (UserData and UserData.info and UserData.info.subscription) or "Premium"
+    )
+})
+
+t4:CreateSection("XD HUB")
+
+t4:CreateParagraph({
+    Title = "About",
+    Content = string.format(
+        "Owner: @mqp6 / Poc\nCreated: 2/10/2026\nDiscord: discord.gg/rmpQfYtnWd\nVersion: 1.0\nMobile: %s",
+        UserInputService.TouchEnabled and "Yes" or "No"
+    )
+})
+
+t4:CreateButton({
+    Name = "Copy Discord",
+    Callback = function()
+        if setclipboard then
+            setclipboard("https://discord.gg/rmpQfYtnWd")
+            Rayfield:Notify({Title = "Copied", Content = "Discord link copied", Duration = 2})
+        end
+    end
+})
+
+t4:CreateButton({
+    Name = "Rejoin",
+    Callback = function()
+        game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer)
+    end
+})
+
+-- ========== AIMBOT LOOP ==========
+task.spawn(function()
+    while wait() do
+        if F.aim.on and Authenticated then
+            local aimInput = UserInputService.TouchEnabled and #UserInputService:GetTouchInputs() > 0 
+                or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+            
+            if aimInput then
+                local closest = nil
+                local dist = F.aim.fov
+                
+                for _, p in pairs(Players:GetPlayers()) do
+                    if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild(F.aim.part) then
+                        local part = p.Character[F.aim.part]
+                        local pos, vis = Camera:WorldToViewportPoint(part.Position)
+                        
+                        if vis then
+                            local mousePos = UserInputService:GetMouseLocation()
+                            local d = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                            
+                            if d < dist then
+                                dist = d
+                                closest = p
+                            end
+                        end
+                    end
+                end
+                
+                if closest and closest.Character and closest.Character:FindFirstChild(F.aim.part) then
+                    local target = closest.Character[F.aim.part].Position
+                    local look = Camera.CFrame.LookVector
+                    local dir = (target - Camera.CFrame.Position).Unit
+                    local smooth = look:Lerp(dir, 1 / F.aim.smooth)
+                    Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, Camera.CFrame.Position + smooth)
+                end
+            end
+        end
+    end
+end)
+
+-- ========== TRIGGERBOT LOOP ==========
+task.spawn(function()
+    while wait() do
+        if F.trig.on and Authenticated then
+            local mouse = LocalPlayer:GetMouse()
+            if mouse.Target then
+                local char = mouse.Target.Parent
+                if char and char:FindFirstChild("Humanoid") then
+                    local player = Players:GetPlayerFromCharacter(char)
+                    if player and player ~= LocalPlayer then
+                        wait(F.trig.delay)
+                        mouse1click()
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- DONE
+Rayfield:Notify({
+    Title = "✅ Loaded",
+    Content = "Welcome " .. (UserData and UserData.info and UserData.info.username or LocalPlayer.Name),
+    Duration = 5
+})
